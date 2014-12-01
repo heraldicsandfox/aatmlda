@@ -31,13 +31,15 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <tgmath.h>
 #include <time.h>
+#include <float.h>
+#include <set>
 #include "constants.h"
 #include "strtokenizer.h"
 #include "utils.h"
 #include "dataset.h"
 #include "model.h"
-#include "walker.h"
 
 using namespace std;
 
@@ -55,10 +57,11 @@ model::~model() {
     }
 
     if (z) {
-	    for (int m = 0; m < M; m++) {
-	    delete [] z[m];
+	for (int m = 0; m < M; m++) {
+	    if (z[m]) {
+		delete z[m];
 	    }
-    delete [] z;
+	}
     }
     
     if (nw) {
@@ -149,13 +152,6 @@ model::~model() {
 	    }
 	}
     }
-
-    if (alias_samples) {
-    for (int w = 0; w < V; w++)
-        if (alias_samples[w]) {
-        delete alias_samples[w];
-        }
-    }
 }
 
 void model::set_default_values() {
@@ -204,6 +200,10 @@ void model::set_default_values() {
     newndsum = NULL;
     newtheta = NULL;
     newphi = NULL;
+
+    vacuous_dist = NULL;
+    uniform_dist = NULL;
+    doc_dists = NULL;
 }
 
 int model::parse_args(int argc, char ** argv) {
@@ -244,7 +244,7 @@ int model::load_model(string model_name) {
     string filename = dir + model_name + tassign_suffix;
     FILE * fin = fopen(filename.c_str(), "r");
     if (!fin) {
-	printf("Cannot open file %d to load model!\n", filename.c_str());
+	printf("Cannot open file %s to load model!\n", filename.c_str());
 	return 1;
     }
     
@@ -611,7 +611,6 @@ int model::init_est() {
     // alpha, beta: from command line or default values
     // niters, savestep: from command line or default values
 
-    // nw[w][k] is the number of times word w is assigned to topic k
     nw = new int*[V];
     for (w = 0; w < V; w++) {
         nw[w] = new int[K];
@@ -619,8 +618,7 @@ int model::init_est() {
     	    nw[w][k] = 0;
         }
     }
-
-    // nd[m][k] is the number of tokens in document m assigned to topic k
+	
     nd = new int*[M];
     for (m = 0; m < M; m++) {
         nd[m] = new int[K];
@@ -628,59 +626,81 @@ int model::init_est() {
     	    nd[m][k] = 0;
         }
     }
-
-    // nwsum[k] is the total count of tokens assigned to topic k	
+	
     nwsum = new int[K];
     for (k = 0; k < K; k++) {
 	nwsum[k] = 0;
     }
     
-
-    // ndsum[m] is the total number of tokens in document m
     ndsum = new int[M];
     for (m = 0; m < M; m++) {
 	ndsum[m] = 0;
     }
 
+    doc_dists = new double*[M];
+    for (m = 0; m < M; m++) {
+        doc_dists[m] = new double[V];
+    }
+    
+    vacuous_dist = new double[V];
+    uniform_dist = new double[V];
+    
+    for (w = 0; w < V; ++w) {
+        vacuous_dist[w] = 0.0;
+        uniform_dist[w] = 1.0 / V;
+        for (m = 0; m < M; ++m) {
+            doc_dists[m][w] = 0.0;
+        }
+    }
+
+    int numtokens = 0;
     srandom(time(0)); // initialize for random number generation
     z = new int*[M];
     for (m = 0; m < ptrndata->M; m++) {
 	int N = ptrndata->docs[m]->length;
 	z[m] = new int[N];
 	
+    
         // initialize for z
         for (n = 0; n < N; n++) {
     	    int topic = (int)(((double)random() / RAND_MAX) * K);
     	    z[m][n] = topic;
     	    
+            int tmpwd = ptrndata->docs[m]->words[n];
     	    // number of instances of word i assigned to topic j
-    	    nw[ptrndata->docs[m]->words[n]][topic] += 1;
+    	    nw[tmpwd][topic] += 1;
     	    // number of words in document i assigned to topic j
     	    nd[m][topic] += 1;
     	    // total number of words assigned to topic j
     	    nwsum[topic] += 1;
+
+            vacuous_dist[tmpwd] += 1.0;
+            doc_dists[m][tmpwd] += 1.0;
         } 
         // total number of words in document i
-        ndsum[m] = N;      
+        ndsum[m] = N; 
+        numtokens += N;     
     }
     
+    // This gives us final distributions for vacuous, uniform, and doc-y
+    for (w = 0; w < V; ++w) {
+        vacuous_dist[w] = (vacuous_dist[w] + beta) / (numtokens + V * beta);
+        for (m = 0; m < M; ++m) {
+            doc_dists[m][w] = (doc_dists[m][w] + beta) / (numtokens + V * beta);
+        }
+    }
+
     // theta[m] is the multinomial distribution over topics k for document m
     theta = new double*[M];
     for (m = 0; m < M; m++) {
         theta[m] = new double[K];
     }
 	
-    // phi[k] is the multinomial distribution over words w for topic k
     phi = new double*[K];
     for (k = 0; k < K; k++) {
         phi[k] = new double[V];
     }    
     
-    alias_samples = new walker*[V];
-    for (w = 0; w < V; w++) {
-        alias_samples[w] = NULL;
-    }
-
     return 0;
 }
 
@@ -690,7 +710,7 @@ int model::init_estc() {
 
     p = new double[K];
 
-    // load model, i.e., read z and ptrndata
+    // load moel, i.e., read z and ptrndata
     if (load_model(model_name)) {
 	printf("Fail to load word-topic assignmetn file of the model!\n");
 	return 1;
@@ -756,13 +776,12 @@ int model::init_estc() {
 
 void model::estimate() {
     if (twords > 0) {
-	    // print out top words per topic
-	    dataset::read_wordmap(dir + wordmapfile, &id2word);
+	// print out top words per topic
+	dataset::read_wordmap(dir + wordmapfile, &id2word);
     }
 
     printf("Sampling %d iterations!\n", niters);
 
-    // Each iteration of Gibbs
     int last_iter = liter;
     for (liter = last_iter + 1; liter <= niters + last_iter; liter++) {
         printf("Iteration %d ...\n", liter);
@@ -784,8 +803,35 @@ void model::estimate() {
     		    compute_theta();
     		    compute_phi();
     		    save_model(utils::generate_model_name(liter));
+                printf("Starting AATM...\n");
+                aatm();
+                printf("Saving post-AATM...\n");
+                compute_theta();
+                compute_phi();
+                save_model(utils::generate_model_name_aatm(liter));
     	    }
     	}
+	printf("Iteration %d ...\n", liter);
+	
+	// for all z_i
+	for (int m = 0; m < M; m++) {
+	    for (int n = 0; n < ptrndata->docs[m]->length; n++) {
+		// (z_i = z[m][n])
+		// sample from p(z_i|z_-i, w)
+		int topic = sampling(m, n);
+		z[m][n] = topic;
+	    }
+	}
+	
+	if (savestep > 0) {
+	    if (liter % savestep == 0) {
+		// saving the model
+		printf("Saving the model at iteration %d ...\n", liter);
+		compute_theta();
+		compute_phi();
+		save_model(utils::generate_model_name(liter));
+	    }
+	}
     }
     
     printf("Gibbs sampling completed!\n");
@@ -796,85 +842,194 @@ void model::estimate() {
     save_model(utils::generate_model_name(-1));
 }
 
-void model::walker_alias(int w) {
-    walker * sampler = new walker(w, this);
-    sampler->pull_samples();
-    if (alias_samples[w] != NULL) {
-        delete alias_samples[w];
+void model::aatm() {
+    // This will keep track of deleted topics
+    set<int> freetopics;
+
+    // Figure out which topics should be dumped using KL divergence
+    double * vdivergences = new double[K];
+    double top_vdivergence = 0.0;
+    double * udivergences = new double[K];
+    double top_udivergence = 0.0;
+
+    for (int k = 0; k < K; ++k) {
+        vdivergences[k] = 0.0;
+        for (int w = 0; w < V; ++w) {
+            vdivergences[k] += (phi[k][w] - vacuous_dist[w]) * log(phi[k][w] / vacuous_dist[w]);
+            udivergences[k] += (phi[k][w] - uniform_dist[w]) * log(phi[k][w] / uniform_dist[w]);
+        }
+        if (vdivergences[k] > top_vdivergence) {
+            top_vdivergence = vdivergences[k];
+        }
+        if (udivergences[k] > top_udivergence) {
+            top_udivergence = udivergences[k];
+        }
     }
-    alias_samples[w] = sampler;
+
+    double u_threshold = 0.1 * top_udivergence;
+    double v_threshold = 0.1 * top_vdivergence;
+
+    for (int k = 0; k < K; ++k) {
+        if (udivergences[k] < u_threshold || vdivergences[k] < v_threshold) {
+            delete_topic(k);
+            freetopics.insert(k);
+            printf("Deleting topic %d ...\n", k);
+        }
+    }
+
+    // Figure out which topics are similar enough to join
+    double ** kdivergences = new double*[K];
+    double top_kdivergence = 0.0;
+    for (int k = 0; k < K; ++k) {
+        kdivergences[k] = new double[K];
+        if (freetopics.find(k) != freetopics.end())
+            continue;
+        for (int l = k + 1; l < K; ++l) {
+            if (freetopics.find(l) != freetopics.end())
+                continue;
+            kdivergences[k][l] = 0.0;
+            for (int w = 0; w < V; ++w) {
+                kdivergences[k][l] += (phi[k][w] - phi[l][w]) * log(phi[k][w] / phi[l][w]);
+            }
+            if (kdivergences[k][l] > top_kdivergence) {
+                top_kdivergence = kdivergences[k][l];
+            }
+        }
+    }
+
+    double k_threshold = 0.05 * top_kdivergence;
+
+    for (int k = 0; k < K; ++k) {
+        if (freetopics.find(k) != freetopics.end())
+            continue;
+        for (int l = k + 1; l < K; ++l) {
+            if (freetopics.find(k) != freetopics.end())
+                continue;
+            if (kdivergences[k][l] < k_threshold && freetopics.size() < ((K + 1)/2)) {
+                merge_topics(k, l);
+                freetopics.insert(l);
+                printf("Deleting topic %d ...\n", k);
+            }
+        }
+    }
+
+    int topics_to_create = freetopics.size();
+
+    // Figure out which topics are doc-y enough to be split
+    double ** mdivergences = new double*[K];
+    double top_mdivergence = 0.0;
+    for (int k = 0; k < K; ++k) {
+        mdivergences[k] = new double[M];
+        for (int m = 0; m < M; ++m) {
+            if (freetopics.find(k) != freetopics.end()) {
+                mdivergences[k][m] = DBL_MAX;
+            } else {
+                mdivergences[k][m] = 0.0;
+                for (int w = 0; w < V; ++w) {
+                    mdivergences[k][m] += (phi[k][w] - doc_dists[m][w]) * log(phi[k][w] / doc_dists[m][w]);
+                }
+            }
+        }
+    }
+    vector<int> topics_to_split = utils::split_topics(kdivergences, K, M, topics_to_create);
+    set<int>::iterator ft = freetopics.begin();
+    vector<int>::iterator ts = topics_to_split.begin();
+    while (ft != freetopics.end() && ts != topics_to_split.end()) {
+        printf("Splitting topic %d with %d ...\n", *ts, *ft);
+        split_topic(*ft, *ts);
+        ft++;
+        ts++;
+    }
+
+    delete [] vdivergences;
+    delete [] udivergences;
+    for (int k = 0; k < K; ++k) {
+        delete [] kdivergences[k];
+        delete [] mdivergences[k];
+    }
+    delete [] kdivergences;
+    delete [] mdivergences;
+}
+
+void model::delete_topic(int top) {
+    for (int m = 0; m < M; m++) {
+        for (int n = 0; n < ptrndata->docs[m]->length; n++) {
+            if (z[m][n] == top) {
+                int w = ptrndata->docs[m]->words[n];
+                z[m][n] = -1;
+                nw[w][top] -= 1;
+                nd[m][top] -= 1;
+                nwsum[top] -= 1;
+                ndsum[m] -= 1;
+            }
+        }
+    }
+}
+
+void model::split_topic(int freet, int splitt) {
+    for (int m = 0; m < M; m++) {
+        for (int n = 0; n < ptrndata->docs[m]->length; n++) {
+            if (z[m][n] == splitt && ((double)random() / RAND_MAX) > 0.5) {
+                int w = ptrndata->docs[m]->words[n];
+                z[m][n] = freet;
+                nw[w][splitt] -= 1;
+                nd[m][splitt] -= 1;
+                nwsum[splitt] -= 1;
+                nw[w][freet] += 1;
+                nd[m][freet] += 1;
+                nwsum[freet] += 1;
+            }
+        }
+    }
+}
+
+void model::merge_topics(int newt, int oldt) {
+    for (int m = 0; m < M; m++) {
+        for (int n = 0; n < ptrndata->docs[m]->length; n++) {
+            if (z[m][n] == oldt) {
+                int w = ptrndata->docs[m]->words[n];
+                z[m][n] = newt;
+                nw[w][oldt] -= 1;
+                nd[m][oldt] -= 1;
+                nwsum[oldt] -= 1;
+                nw[w][newt] += 1;
+                nd[m][newt] += 1;
+                nwsum[newt] += 1;
+            }
+        }
+    }
 }
 
 // The Gibbs sampler itself
-// TODO (xanda) rewrite this for MHW
 int model::sampling(int m, int n) {
     // remove z_i from the count variables
     int topic = z[m][n];
     int w = ptrndata->docs[m]->words[n];
-    nw[w][topic] -= 1;
-    nd[m][topic] -= 1;
-    nwsum[topic] -= 1;
-    ndsum[m] -= 1;
-
-    int oldtopic = topic;
-    double Vbeta = V * beta;
-    double Ptotal = 0.0;
-
-    if (alias_samples[w] == NULL) {
-        walker_alias(w);
+    if (topic != -1) {
+        nw[w][topic] -= 1;
+        nd[m][topic] -= 1;
+        nwsum[topic] -= 1;
+        ndsum[m] -= 1;
     }
-    double Qtotal = alias_samples[w]->Q;
-    vector<int> validks;
-
+    
+    double Vbeta = V * beta;
+    double Kalpha = K * alpha;    
     // do multinomial sampling via cumulative method
     for (int k = 0; k < K; k++) {
-        if (nd[m][k] == 0)
-            continue;
-        validks.push_back(k);
-        p[k] = nd[m][k] * (nw[w][k] + beta) / (nwsum[k] + Vbeta);
-        Ptotal += p[k];
+	p[k] = (nw[w][k] + beta) / (nwsum[k] + Vbeta) *
+		    (nd[m][k] + alpha) / (ndsum[m] + Kalpha);
     }
-
-    while (true) {
-
-        // scaled sample because of unnormalized p[]
-        double u = ((double)random() / RAND_MAX) * (Ptotal + Qtotal);
+    // cumulate multinomial parameters
+    for (int k = 1; k < K; k++) {
+	p[k] += p[k - 1];
+    }
+    // scaled sample because of unnormalized p[]
+    double u = ((double)random() / RAND_MAX) * p[K - 1];
     
-        if (u < Qtotal) {
-            if (alias_samples[w] == NULL or alias_samples[w]->is_empty()) {
-                walker_alias(w);
-                Qtotal = alias_samples[w]->Q;
-            }
-            topic = alias_samples[w]->next_topic();
-        } else {
-            u -= Qtotal;
-            for (vector<int>::iterator i = validks.begin(); i != validks.end(); ++i) {
-    	        if (p[*i] > u) {
-                    topic = *i;
-    	            break;
-    	        } else {
-                    u -= p[*i];
-                }
-            }
-        }
-
-        if (topic == oldtopic) {
-            break;
-        }
-        double probaccept = (
-                             (nd[m][topic] + alpha) * (nw[w][topic] + beta) *
-                             (nwsum[topic] + Vbeta) * (p[topic] + alias_samples[w]->topicprobs[topic])
-                            ) / ( 
-                             (nd[m][oldtopic] + alpha) * (nw[w][oldtopic] + beta) *
-                             (nwsum[oldtopic] + Vbeta) * (p[oldtopic] + alias_samples[w]->topicprobs[oldtopic])
-                            );
-        if (probaccept >= 1.0) {
-            break;
-        }
-        double v = ((double)random() / RAND_MAX);
-        if (v < probaccept) {
-            break;
-        }
+    for (topic = 0; topic < K; topic++) {
+	if (p[topic] > u) {
+	    break;
+	}
     }
     
     // add newly estimated z_i to count variables
@@ -908,9 +1063,9 @@ int model::init_inf() {
 
     p = new double[K];
 
-    // load model, i.e., read z and ptrndata
+    // load moel, i.e., read z and ptrndata
     if (load_model(model_name)) {
-	printf("Fail to load word-topic assignment file of the model!\n");
+	printf("Fail to load word-topic assignmetn file of the model!\n");
 	return 1;
     }
 

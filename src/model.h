@@ -32,11 +32,8 @@
 #ifndef	_MODEL_H
 #define	_MODEL_H
 
-#include <vector>
 #include "constants.h"
 #include "dataset.h"
-#include "walker.h"
-
 
 using namespace std;
 
@@ -85,8 +82,11 @@ public:
     int * ndsum;                    // nasum[i]: total number of words in document i, size M
     double ** theta;                // theta: document-topic distributions, size M x K
     double ** phi;                  // phi: topic-word distributions, size K x V 
-    walker ** alias_samples;         // alias_samples[w]: a vector of topic samples for word w up to length K
     
+    double * vacuous_dist;
+    double * uniform_dist;
+    double ** doc_dists;
+
     // for inference only
     int inf_liter;
     int newM;
@@ -101,7 +101,7 @@ public:
     // --------------------------------------
     
     model() {
-	    set_default_values();
+	set_default_values();
     }
           
     ~model();
@@ -145,7 +145,6 @@ public:
     // estimate LDA model using Gibbs sampling
     void estimate();
     int sampling(int m, int n);
-    void walker_alias(int w);
     void compute_theta();
     void compute_phi();
     
@@ -156,6 +155,11 @@ public:
     int inf_sampling(int m, int n);
     void compute_newtheta();
     void compute_newphi();
+
+    void aatm();
+    void merge_topics(int newt, int oldt);
+    void split_topic(int freet, int splitt);
+    void delete_topic(int top);
 };
 
 #endif

@@ -25,11 +25,17 @@
 #include <stdlib.h>
 #include <string>
 #include <map>
+#include <queue>
+#include <set>
+#include <tuple>
 #include "strtokenizer.h"
 #include "utils.h"
 #include "model.h"
 
 using namespace std;
+
+typedef tuple<double, int> dituple;
+
 
 int utils::parse_args(int argc, char ** argv, model * pmodel) {
     int model_status = MODEL_STATUS_UNKNOWN;
@@ -321,6 +327,12 @@ string utils::generate_model_name(int iter) {
     return model_name;
 }
 
+string utils::generate_model_name_aatm(int iter) {
+    string base_model_name = utils::generate_model_name(iter);
+    string model_name = base_model_name + "-aatm";
+    return model_name;
+}
+
 void utils::sort(vector<double> & probs, vector<int> & words) {
     for (int i = 0; i < probs.size() - 1; i++) {
 	for (int j = i + 1; j < probs.size(); j++) {
@@ -375,3 +387,21 @@ void utils::quicksort(vector<pair<int, double> > & vect, int left, int right) {
     }    
 }
 
+vector<int> utils::split_topics(double ** divergences, int K, int M, int free_topics) {
+    priority_queue<dituple> queue;
+    for (int k = 0; k < K; ++k) {
+        for (int m = 0; m < M; ++m) {
+            tuple<double, int> negdiv = make_tuple(-divergences[k][m], k);
+            queue.push(negdiv);
+        }
+    }
+    set<int> topics_to_split;
+    while (topics_to_split.size() < free_topics) {
+        tuple<double, int> divtop = queue.top();
+        topics_to_split.insert(get<1>(divtop));
+        queue.pop();
+    }
+
+    vector<int> topics(topics_to_split.begin(), topics_to_split.end());
+    return topics;
+}

@@ -26,6 +26,7 @@
 
 #include <string>
 
+
 using namespace std;
 
 class model;
@@ -41,10 +42,13 @@ public:
     // generate the model name for the current iteration
     // iter = -1 => final model
     static string generate_model_name(int iter);  
-    
+    static string generate_model_name_aatm(int iter);
+
     // sort    
     static void sort(vector<double> & probs, vector<int> & words);
     static void quicksort(vector<pair<int, double> > & vect, int left, int right);
+
+    static vector<int> split_topics(double ** divergences, int K, int M, int free_topics);
 };
 
 #endif
