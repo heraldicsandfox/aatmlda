@@ -72,6 +72,23 @@ model::~model() {
 	}
     }
 
+    if (word2constr) {
+        delete word2constr;
+    }
+
+    if (constr2size) {
+        delete constr2size;
+    }
+
+    if (nl) {
+    for (int k = 0; k < K; k++) {
+        if (nl[k]) {
+        delete nl[k];
+        }
+    }
+    }
+
+
     if (nd) {
 	for (int m = 0; m < M; m++) {
 	    if (nd[m]) {
@@ -165,6 +182,7 @@ void model::set_default_values() {
     
     dir = "./";
     dfile = "trndocs.dat";
+    fname = "model";
     model_name = "model-final";    
     model_status = MODEL_STATUS_UNKNOWN;
     
@@ -186,10 +204,13 @@ void model::set_default_values() {
     z = NULL;
     nw = NULL;
     nd = NULL;
+    nl = NULL;
     nwsum = NULL;
     ndsum = NULL;
     theta = NULL;
     phi = NULL;
+    word2constr = NULL;
+    constr2size = NULL;
     
     newM = 0;
     newV = 0;
@@ -538,6 +559,7 @@ int model::save_inf_model_others(string filename) {
 
     fprintf(fout, "alpha=%f\n", alpha);
     fprintf(fout, "beta=%f\n", beta);
+    fprintf(fout, "eta=%f\n", eta);
     fprintf(fout, "ntopics=%d\n", K);
     fprintf(fout, "ndocs=%d\n", newM);
     fprintf(fout, "nwords=%d\n", newV);
@@ -591,6 +613,23 @@ int model::save_inf_model_twords(string filename) {
     return 0;    
 }
 
+int model::save_model_words(string filename) {
+    FILE * fout = fopen(filename.c_str(), "w");
+    if (!fout) {
+    printf("Cannot open file %s to save!\n", filename.c_str());
+    return 1;
+    }
+
+    mapid2word::iterator it = id2word.begin();
+    while (it != id2word.end()) {
+        fprintf(fout, "%d   %s\n", (it->first), (it->second).c_str());
+        ++it;
+    }
+
+    fclose(fout);
+    return 0;
+}
+
 
 int model::init_est() {
     int m, n, w, k;
@@ -599,7 +638,7 @@ int model::init_est() {
 
     // + read training data
     ptrndata = new dataset;
-    if (ptrndata->read_trndata(dir + dfile, dir + wordmapfile)) {
+    if (ptrndata->read_trndata(dir + dfile, dir + wordmapfile, dir + confile)) {
         printf("Fail to read training data!\n");
         return 1;
     }
@@ -607,8 +646,9 @@ int model::init_est() {
     // + allocate memory and assign values for variables
     M = ptrndata->M;
     V = ptrndata->V;
+    C = ptrndata->C;
     // K: from command line or default value
-    // alpha, beta: from command line or default values
+    // alpha, beta, eta: from command line or default values
     // niters, savestep: from command line or default values
 
     nw = new int*[V];
@@ -626,6 +666,14 @@ int model::init_est() {
     	    nd[m][k] = 0;
         }
     }
+
+    nl = new int*[K];
+    for (k = 0; k < K; k++) {
+        nl[k] = new int[C];
+        for (int l = 0; l < C; ++l) {
+            nl[k][l] = 0;
+        }
+    }
 	
     nwsum = new int[K];
     for (k = 0; k < K; k++) {
@@ -635,6 +683,22 @@ int model::init_est() {
     ndsum = new int[M];
     for (m = 0; m < M; m++) {
 	ndsum[m] = 0;
+    }
+
+    constr2size = new int[C];
+    for (int l = 0; l < C; ++l) {
+        constr2size[l] = 0;
+    }
+
+    word2constr = new int[V];
+    for (w = 0; w < V; ++w) {
+        map<int, int>::iterator it = ptrndata->word2constraint.find(w);
+        if (it != ptrndata->word2constraint.end()) {
+            word2constr[w] = it->second;
+            constr2size[it->second]++;
+        } else {
+            word2constr[w] = -1;
+        }
     }
 
     doc_dists = new double*[M];
@@ -659,7 +723,7 @@ int model::init_est() {
     for (m = 0; m < ptrndata->M; m++) {
 	int N = ptrndata->docs[m]->length;
 	z[m] = new int[N];
-	
+    map<int, int>::iterator it;
     
         // initialize for z
         for (n = 0; n < N; n++) {
@@ -667,12 +731,18 @@ int model::init_est() {
     	    z[m][n] = topic;
     	    
             int tmpwd = ptrndata->docs[m]->words[n];
+
     	    // number of instances of word i assigned to topic j
     	    nw[tmpwd][topic] += 1;
     	    // number of words in document i assigned to topic j
     	    nd[m][topic] += 1;
     	    // total number of words assigned to topic j
     	    nwsum[topic] += 1;
+
+            if (word2constr[tmpwd] > -1) {
+                nl[topic][word2constr[tmpwd]]++;
+            }
+
 
             vacuous_dist[tmpwd] += 1.0;
             doc_dists[m][tmpwd] += 1.0;
@@ -690,16 +760,16 @@ int model::init_est() {
         }
     }
 
-    // theta[m] is the multinomial distribution over topics k for document m
-    theta = new double*[M];
-    for (m = 0; m < M; m++) {
-        theta[m] = new double[K];
-    }
 	
     phi = new double*[K];
     for (k = 0; k < K; k++) {
         phi[k] = new double[V];
     }    
+
+    theta = new double*[M];
+    for (m = 0; m < M; m++) {
+        theta[m] = new double[K];
+    }
     
     return 0;
 }
@@ -745,7 +815,7 @@ int model::init_estc() {
     for (m = 0; m < ptrndata->M; m++) {
 	int N = ptrndata->docs[m]->length;
 
-	// assign values for nw, nd, nwsum, and ndsum	
+	// assign values for nw, nd, nwsum, and ndsum
         for (n = 0; n < N; n++) {
     	    int w = ptrndata->docs[m]->words[n];
     	    int topic = z[m][n];
@@ -758,7 +828,7 @@ int model::init_estc() {
     	    nwsum[topic] += 1;
         } 
         // total number of words in document i
-        ndsum[m] = N;      
+        ndsum[m] = N;
     }
 	
     theta = new double*[M];
@@ -771,13 +841,18 @@ int model::init_estc() {
         phi[k] = new double[V];
     }    
 
-    return 0;        
+    return 0;
 }
 
 void model::estimate() {
     if (twords > 0) {
 	// print out top words per topic
 	dataset::read_wordmap(dir + wordmapfile, &id2word);
+    }
+
+    if (save_model_words(dir + fname + ".words")) {
+        printf("Could not create word file!");
+        return;
     }
 
     printf("Sampling %d iterations!\n", niters);
@@ -797,49 +872,27 @@ void model::estimate() {
     	}
     	
     	if (savestep > 0) {
-    	    if (liter % savestep == 0) {
+    	    if (liter % savestep == 0 && liter != niters + last_iter) {
     		    // saving the model
     		    printf("Saving the model at iteration %d ...\n", liter);
     		    compute_theta();
     		    compute_phi();
-    		    save_model(utils::generate_model_name(liter));
+    		    save_model(utils::generate_model_name(liter, fname));
                 printf("Starting AATM...\n");
                 aatm();
                 printf("Saving post-AATM...\n");
                 compute_theta();
                 compute_phi();
-                save_model(utils::generate_model_name_aatm(liter));
+                save_model(utils::generate_model_name_aatm(liter, fname));
     	    }
     	}
-	printf("Iteration %d ...\n", liter);
-	
-	// for all z_i
-	for (int m = 0; m < M; m++) {
-	    for (int n = 0; n < ptrndata->docs[m]->length; n++) {
-		// (z_i = z[m][n])
-		// sample from p(z_i|z_-i, w)
-		int topic = sampling(m, n);
-		z[m][n] = topic;
-	    }
-	}
-	
-	if (savestep > 0) {
-	    if (liter % savestep == 0) {
-		// saving the model
-		printf("Saving the model at iteration %d ...\n", liter);
-		compute_theta();
-		compute_phi();
-		save_model(utils::generate_model_name(liter));
-	    }
-	}
     }
-    
     printf("Gibbs sampling completed!\n");
     printf("Saving the final model!\n");
     compute_theta();
     compute_phi();
     liter--;
-    save_model(utils::generate_model_name(-1));
+    save_model(utils::generate_model_name(-1, fname));
 }
 
 void model::aatm() {
@@ -1005,31 +1058,61 @@ int model::sampling(int m, int n) {
     // remove z_i from the count variables
     int topic = z[m][n];
     int w = ptrndata->docs[m]->words[n];
+    int l = word2constr[w];
     if (topic != -1) {
         nw[w][topic] -= 1;
         nd[m][topic] -= 1;
         nwsum[topic] -= 1;
         ndsum[m] -= 1;
+        if (l != -1) {
+            nl[topic][l] -= 1;
+        }
     }
     
     double Vbeta = V * beta;
-    double Kalpha = K * alpha;    
-    // do multinomial sampling via cumulative method
-    for (int k = 0; k < K; k++) {
-	p[k] = (nw[w][k] + beta) / (nwsum[k] + Vbeta) *
-		    (nd[m][k] + alpha) / (ndsum[m] + Kalpha);
-    }
-    // cumulate multinomial parameters
-    for (int k = 1; k < K; k++) {
-	p[k] += p[k - 1];
-    }
-    // scaled sample because of unnormalized p[]
-    double u = ((double)random() / RAND_MAX) * p[K - 1];
-    
-    for (topic = 0; topic < K; topic++) {
-	if (p[topic] > u) {
-	    break;
-	}
+    double Kalpha = K * alpha;
+    if (l == -1) {  
+        // do multinomial sampling via cumulative method
+        for (int k = 0; k < K; k++) {
+	        p[k] = (nw[w][k] + beta) / (nwsum[k] + Vbeta) *
+		        (nd[m][k] + alpha) / (ndsum[m] + Kalpha);
+        }
+        // cumulate multinomial parameters
+        for (int k = 1; k < K; k++) {
+	        p[k] += p[k - 1];
+        }
+        // scaled sample because of unnormalized p[]
+        double u = ((double)random() / RAND_MAX) * p[K - 1];
+        
+        for (topic = 0; topic < K; topic++) {
+    	if (p[topic] > u) {
+    	    break;
+    	}
+        }
+    } else {
+        // do multinomial sampling via cumulative method
+        int csize = constr2size[l];
+        double Cbeta = csize * beta;
+        double Ceta = csize * eta;
+        for (int k = 0; k < K; k++) {
+            p[k] = (nd[m][k] + alpha) / (ndsum[m] + Kalpha) *
+                   (nl[k][l] + Cbeta) / (nwsum[k] + Vbeta) *
+                   (nw[w][k] + eta) / (nl[k][l] + Ceta); 
+        }
+        // cumulate multinomial parameters
+        for (int k = 1; k < K; k++) {
+            p[k] += p[k - 1];
+        }
+        // scaled sample because of unnormalized p[]
+        double u = ((double)random() / RAND_MAX) * p[K - 1];
+        
+        for (topic = 0; topic < K; topic++) {
+        if (p[topic] > u) {
+            break;
+        }
+        }
+        // count the special constraint value
+        nl[topic][l] += 1;
     }
     
     // add newly estimated z_i to count variables
@@ -1052,7 +1135,14 @@ void model::compute_theta() {
 void model::compute_phi() {
     for (int k = 0; k < K; k++) {
 	for (int w = 0; w < V; w++) {
-	    phi[k][w] = (nw[w][k] + beta) / (nwsum[k] + V * beta);
+        if (word2constr[w] == -1) {
+	        phi[k][w] = (nw[w][k] + beta) / (nwsum[k] + V * beta);
+        } else {
+            int l = word2constr[w];
+            int csize = constr2size[l];
+            phi[k][w] = (nl[k][l] + csize * beta) / (nwsum[k] + V * beta) *
+                        (nw[w][k] + eta) / (nl[k][l] + csize * eta); 
+        }
 	}
     }
 }

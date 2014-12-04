@@ -51,6 +51,8 @@ public:
 
     string dir;			// model directory
     string dfile;		// data file    
+    string fname;       // special file name for model
+    string confile;     // constraint file 
     string model_name;		// model name
     int model_status;		// model status:
 				// MODEL_STATUS_UNKNOWN: unknown status
@@ -67,7 +69,8 @@ public:
     int M; // dataset size (i.e., number of docs)
     int V; // vocabulary size
     int K; // number of topics
-    double alpha, beta; // LDA hyperparameters 
+    int C; // number of constraints
+    double alpha, beta, eta; // LDA hyperparameters 
     int niters; // number of Gibbs sampling iterations
     int liter; // the iteration at which the model was saved
     int savestep; // saving period
@@ -80,8 +83,11 @@ public:
     int ** nd;                      // na[i][j]: number of words in document i assigned to topic j, size M x K
     int * nwsum;                    // nwsum[j]: total number of words assigned to topic j, size K
     int * ndsum;                    // nasum[i]: total number of words in document i, size M
+    int ** nl;                      // nl[i][j]: number of tokens in constraint j assigned to topic i, size K x C
     double ** theta;                // theta: document-topic distributions, size M x K
     double ** phi;                  // phi: topic-word distributions, size K x V 
+    int * word2constr;              // word2constr[w] is the constraint id of word w or -1
+    int * constr2size;              // constr2size[l] is the size of constraint l
     
     double * vacuous_dist;
     double * uniform_dist;
@@ -129,6 +135,7 @@ public:
     int save_model_phi(string filename);
     int save_model_others(string filename);
     int save_model_twords(string filename);
+    int save_model_words(string filename);
     
     // saving inference outputs
     int save_inf_model(string model_name);

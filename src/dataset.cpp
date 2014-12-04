@@ -111,9 +111,10 @@ int dataset::read_wordmap(string wordmapfile, mapid2word * pid2word) {
     return 0;
 }
 
-int dataset::read_trndata(string dfile, string wordmapfile) {
+int dataset::read_trndata(string dfile, string wordmapfile, string constraintfile) {
     mapword2id word2id;
-    
+    mapid2int word2constraint;  
+
     FILE * fin = fopen(dfile.c_str(), "r");
     if (!fin) {
 	printf("Cannot open file %s to read!\n", dfile.c_str());
@@ -183,6 +184,36 @@ int dataset::read_trndata(string dfile, string wordmapfile) {
     // update number of words
     V = word2id.size();
     
+    // read in constraints
+    FILE * conin = fopen(constraintfile.c_str(), "r");
+    if (!fin) {
+        printf("No constraints, continuing.\n");
+    } else {
+        char conbuff[BUFF_SIZE_LONG];
+        string conline;
+        fgets(conbuff, BUFF_SIZE_LONG - 1, conin);
+        C = atoi(conbuff);
+        if (C <= 0) {
+            printf("No constraints in file, continuing.\n");
+        } else {
+            for (int i = 0; i < C; ++i) {
+                fgets(conbuff, BUFF_SIZE_LONG - 1, conin);
+                conline = conbuff;
+                strtokenizer constrtok(conline, " \t");
+                int conlen = constrtok.count_tokens();
+                for (int j = 0; j < conlen; ++j) {
+                    it = word2id.find(constrtok.token(j));
+                    if (it == word2id.end()) {
+                        printf("Constraint word %s not in vocab\n", constrtok.token(j).c_str());
+                    } else {
+                        word2constraint.insert(pair<int, int>(it->second, i));
+                    }
+                }
+            }
+        }
+    }
+    fclose(conin);
+
     return 0;
 }
 

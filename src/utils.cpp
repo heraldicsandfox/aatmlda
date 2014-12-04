@@ -42,8 +42,11 @@ int utils::parse_args(int argc, char ** argv, model * pmodel) {
     string dir = "";
     string model_name = "";
     string dfile = "";
+    string fname = "model";
+    string confile = "";
     double alpha = -1.0;
     double beta = -1.0;
+    double eta = 100;
     int K = 0;
     int niters = 0;
     int savestep = 0;
@@ -76,8 +79,11 @@ int utils::parse_args(int argc, char ** argv, model * pmodel) {
 	    alpha = atof(argv[++i]);	    
 	    
 	} else if (arg == "-beta") {
-	    beta = atof(argv[++i]);	    
-	    
+	    beta = atof(argv[++i]);
+
+    } else if (arg == "-eta") {
+        eta = atof(argv[++i]);     
+        	    
 	} else if (arg == "-ntopics") {
 	    K = atoi(argv[++i]);	    
 	    
@@ -92,7 +98,13 @@ int utils::parse_args(int argc, char ** argv, model * pmodel) {
 	    
 	} else if (arg == "-withrawdata") {
 	    withrawdata = 1;
-	
+    
+    } else if (arg == "-fname") {
+	    fname = argv[++i];
+
+    } else if (arg == "-confile") {
+        confile = argv[++i];
+
 	} else {
 	    // any more?
 	}	
@@ -123,6 +135,10 @@ int utils::parse_args(int argc, char ** argv, model * pmodel) {
 	    pmodel->beta = beta;
 	}
 	
+    if (eta >= 0.0) {
+        pmodel->eta = eta;
+    }
+
 	if (niters > 0) {
 	    pmodel->niters = niters;
 	}
@@ -134,8 +150,10 @@ int utils::parse_args(int argc, char ** argv, model * pmodel) {
 	if (twords > 0) {
 	    pmodel->twords = twords;
 	}
-	
+
 	pmodel->dfile = dfile;
+    pmodel->fname = fname;
+    pmodel->confile = confile;
 	
 	string::size_type idx = dfile.find_last_of("/");			
 	if (idx == string::npos) {
@@ -301,8 +319,8 @@ int utils::read_and_parse(string filename, model * pmodel) {
     return 0;
 }
 
-string utils::generate_model_name(int iter) {
-    string model_name = "model-";
+string utils::generate_model_name(int iter, string fname) {
+    string model_name = fname + '-';
 
     char buff[BUFF_SIZE_SHORT];
     
@@ -327,8 +345,8 @@ string utils::generate_model_name(int iter) {
     return model_name;
 }
 
-string utils::generate_model_name_aatm(int iter) {
-    string base_model_name = utils::generate_model_name(iter);
+string utils::generate_model_name_aatm(int iter, string fname) {
+    string base_model_name = utils::generate_model_name(iter, fname);
     string model_name = base_model_name + "-aatm";
     return model_name;
 }

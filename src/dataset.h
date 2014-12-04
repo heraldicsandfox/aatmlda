@@ -34,6 +34,8 @@ using namespace std;
 typedef map<string, int> mapword2id;
 // map of words/terms [int => string]
 typedef map<int, string> mapid2word;
+// map of constraints to sizes [int => int]
+typedef map<int, int> mapid2int;
 
 class document {
 public:
@@ -100,20 +102,24 @@ class dataset {
 public:
     document ** docs;
     document ** _docs; // used only for inference
-    map<int, int> _id2id; // also used only for inference
+    mapid2int _id2id; // also used only for inference
     int M; // number of documents
     int V; // number of words
+    int C; // number of constraints
+    mapid2int word2constraint;
     
     dataset() {
 	docs = NULL;
 	_docs = NULL;
 	M = 0;
 	V = 0;
+    C = 0;
     }
     
     dataset(int M) {
 	this->M = M;
 	this->V = 0;
+    this->C = 0;
 	docs = new document*[M];	
 	_docs = NULL;
     }   
@@ -168,7 +174,7 @@ public:
     static int read_wordmap(string wordmapfile, mapword2id * pword2id);
     static int read_wordmap(string wordmapfile, mapid2word * pid2word);
     
-    int read_trndata(string dfile, string wordmapfile);
+    int read_trndata(string dfile, string wordmapfile, string constraintfile);
     int read_newdata(string dfile, string wordmapfile);
     int read_newdata_withrawstrs(string dfile, string wordmapfile);
 };
