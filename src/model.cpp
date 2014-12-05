@@ -901,9 +901,9 @@ void model::aatm() {
 
     // Figure out which topics should be dumped using KL divergence
     double * vdivergences = new double[K];
-    double top_vdivergence = 0.0;
+    double sum_vdivergence = 0.0;
     double * udivergences = new double[K];
-    double top_udivergence = 0.0;
+    double sum_udivergence = 0.0;
 
     for (int k = 0; k < K; ++k) {
         vdivergences[k] = 0.0;
@@ -911,22 +911,24 @@ void model::aatm() {
             vdivergences[k] += (phi[k][w] - vacuous_dist[w]) * log(phi[k][w] / vacuous_dist[w]);
             udivergences[k] += (phi[k][w] - uniform_dist[w]) * log(phi[k][w] / uniform_dist[w]);
         }
-        if (vdivergences[k] > top_vdivergence) {
-            top_vdivergence = vdivergences[k];
-        }
-        if (udivergences[k] > top_udivergence) {
-            top_udivergence = udivergences[k];
-        }
+        sum_vdivergence += vdivergences[k];
+        sum_udivergence += udivergences[k];
     }
 
-    double u_threshold = 0.1 * top_udivergence;
-    double v_threshold = 0.1 * top_vdivergence;
+    double u_threshold = 0.2 * sum_udivergence / K;
+    double v_threshold = 0.2 * sum_vdivergence / K;
 
     for (int k = 0; k < K; ++k) {
         if (udivergences[k] < u_threshold || vdivergences[k] < v_threshold) {
+            printf("Deleting topic %d ...\n", k);
+            printf("U: %f Thresh: %f    V: %f Thresh: %f\n",
+                    udivergences[k],
+                    u_threshold,
+                    vdivergences[k],
+                    v_threshold
+            );
             delete_topic(k);
             freetopics.insert(k);
-            printf("Deleting topic %d ...\n", k);
         }
     }
 
@@ -961,7 +963,7 @@ void model::aatm() {
             if (kdivergences[k][l] < k_threshold && freetopics.size() < ((K + 1)/2)) {
                 merge_topics(k, l);
                 freetopics.insert(l);
-                printf("Deleting topic %d ...\n", k);
+                printf("Joining topics %d and %d ...\n", k, l);
             }
         }
     }
