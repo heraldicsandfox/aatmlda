@@ -224,7 +224,6 @@ void model::set_default_values() {
 
     vacuous_dist = NULL;
     uniform_dist = NULL;
-    doc_dists = NULL;
 }
 
 int model::parse_args(int argc, char ** argv) {
@@ -700,11 +699,6 @@ int model::init_est() {
             word2constr[w] = -1;
         }
     }
-
-    doc_dists = new double*[M];
-    for (m = 0; m < M; m++) {
-        doc_dists[m] = new double[V];
-    }
     
     vacuous_dist = new double[V];
     uniform_dist = new double[V];
@@ -712,9 +706,6 @@ int model::init_est() {
     for (w = 0; w < V; ++w) {
         vacuous_dist[w] = 0.0;
         uniform_dist[w] = 1.0 / V;
-        for (m = 0; m < M; ++m) {
-            doc_dists[m][w] = 0.0;
-        }
     }
 
     int numtokens = 0;
@@ -745,7 +736,6 @@ int model::init_est() {
 
 
             vacuous_dist[tmpwd] += 1.0;
-            doc_dists[m][tmpwd] += 1.0;
         } 
         // total number of words in document i
         ndsum[m] = N; 
@@ -755,9 +745,6 @@ int model::init_est() {
     // This gives us final distributions for vacuous, uniform, and doc-y
     for (w = 0; w < V; ++w) {
         vacuous_dist[w] = (vacuous_dist[w] + beta) / (numtokens + V * beta);
-        for (m = 0; m < M; ++m) {
-            doc_dists[m][w] = (doc_dists[m][w] + beta) / (numtokens + V * beta);
-        }
     }
 
 	
@@ -969,41 +956,22 @@ void model::aatm() {
     }
 
     int topics_to_create = freetopics.size();
-
-    // Figure out which topics are doc-y enough to be split
-    double ** mdivergences = new double*[K];
-    double top_mdivergence = 0.0;
-    for (int k = 0; k < K; ++k) {
-        mdivergences[k] = new double[M];
-        for (int m = 0; m < M; ++m) {
-            if (freetopics.find(k) != freetopics.end()) {
-                mdivergences[k][m] = DBL_MAX;
-            } else {
-                mdivergences[k][m] = 0.0;
-                for (int w = 0; w < V; ++w) {
-                    mdivergences[k][m] += (phi[k][w] - doc_dists[m][w]) * log(phi[k][w] / doc_dists[m][w]);
-                }
-            }
-        }
-    }
-    vector<int> topics_to_split = utils::split_topics(kdivergences, K, M, topics_to_create);
     set<int>::iterator ft = freetopics.begin();
-    vector<int>::iterator ts = topics_to_split.begin();
-    while (ft != freetopics.end() && ts != topics_to_split.end()) {
-        printf("Splitting topic %d with %d ...\n", *ts, *ft);
-        split_topic(*ft, *ts);
+    while (ft != freetopics.end()) {
+        int k = rand() % K;
+        if (freetopics.find(k) != freetopics.end())
+            continue;
+        printf("Splitting topic %d with %d ...\n", k, *ft);
+        split_topic(k, *ft);
         ft++;
-        ts++;
     }
 
     delete [] vdivergences;
     delete [] udivergences;
     for (int k = 0; k < K; ++k) {
         delete [] kdivergences[k];
-        delete [] mdivergences[k];
     }
     delete [] kdivergences;
-    delete [] mdivergences;
 }
 
 void model::delete_topic(int top) {
