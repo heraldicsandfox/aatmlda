@@ -52,6 +52,9 @@ int utils::parse_args(int argc, char ** argv, model * pmodel) {
     int savestep = 0;
     int twords = 0;
     int withrawdata = 0;
+    double kthresh = -1.0;
+    double uthresh = -1.0;
+    double vthresh = -1.0;
 
     int i = 0; 
     while (i < argc) {
@@ -80,6 +83,15 @@ int utils::parse_args(int argc, char ** argv, model * pmodel) {
 	    
 	} else if (arg == "-beta") {
 	    beta = atof(argv[++i]);
+
+    } else if (arg == "-uthresh") {
+        uthresh = atof(argv[++i]);        
+        
+    } else if (arg == "-vthresh") {
+        vthresh = atof(argv[++i]);
+
+    } else if (arg == "-kthresh") {
+        kthresh = atof(argv[++i]);
 
     } else if (arg == "-eta") {
         eta = atof(argv[++i]);     
@@ -137,6 +149,18 @@ int utils::parse_args(int argc, char ** argv, model * pmodel) {
 	
     if (eta >= 0.0) {
         pmodel->eta = eta;
+    }
+
+    if (vthresh >= 0.0) {
+        pmodel->vthresh = vthresh;
+    }
+
+    if (uthresh >= 0.0) {
+        pmodel->uthresh = uthresh;
+    }
+
+    if (kthresh >= 0.0) {
+        pmodel->kthresh = kthresh;
     }
 
 	if (niters > 0) {

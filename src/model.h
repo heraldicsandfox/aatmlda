@@ -71,6 +71,7 @@ public:
     int K; // number of topics
     int C; // number of constraints
     double alpha, beta, eta; // LDA hyperparameters 
+    double uthresh, vthresh, kthresh;
     int niters; // number of Gibbs sampling iterations
     int liter; // the iteration at which the model was saved
     int savestep; // saving period

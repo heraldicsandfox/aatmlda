@@ -194,6 +194,9 @@ void model::set_default_values() {
     K = 100;
     alpha = 50.0 / K;
     beta = 0.1;
+    uthresh = 0.3;
+    vthresh = 0.3;
+    kthresh = 0.3;
     niters = 2000;
     liter = 0;
     savestep = 200;    
@@ -319,26 +322,13 @@ int model::load_model(string model_name) {
 }
 
 int model::save_model(string model_name) {
-    if (save_model_tassign(dir + model_name + tassign_suffix)) {
-	return 1;
-    }
     
     if (save_model_others(dir + model_name + others_suffix)) {
 	return 1;
     }
     
-    if (save_model_theta(dir + model_name + theta_suffix)) {
-	return 1;
-    }
-    
     if (save_model_phi(dir + model_name + phi_suffix)) {
 	return 1;
-    }
-    
-    if (twords > 0) {
-	if (save_model_twords(dir + model_name + twords_suffix)) {
-	    return 1;
-	}
     }
     
     return 0;
@@ -413,10 +403,14 @@ int model::save_model_others(string filename) {
 
     fprintf(fout, "alpha=%f\n", alpha);
     fprintf(fout, "beta=%f\n", beta);
+    fprintf(fout, "eta=%f\n", eta);
     fprintf(fout, "ntopics=%d\n", K);
     fprintf(fout, "ndocs=%d\n", M);
     fprintf(fout, "nwords=%d\n", V);
     fprintf(fout, "liter=%d\n", liter);
+    fprintf(fout, "kthresh=%f\n", kthresh);
+    fprintf(fout, "uthresh=%f\n", uthresh);
+    fprintf(fout, "vthresh=%f\n", vthresh);
     
     fclose(fout);    
     
@@ -843,6 +837,7 @@ void model::estimate() {
     }
 
     printf("Sampling %d iterations!\n", niters);
+    printf("uthresh = %f, vthresh = %f, kthresh = %f \n", uthresh, vthresh, kthresh);
 
     int last_iter = liter;
     for (liter = last_iter + 1; liter <= niters + last_iter; liter++) {
@@ -870,6 +865,18 @@ void model::estimate() {
                 printf("Saving post-AATM...\n");
                 compute_theta();
                 compute_phi();
+                double loglikelihood = 0.0;
+                int denom = 0;
+                for (int m = 0; m < M; m++) {
+                    for (int n = 0; n < ptrndata->docs[m]->length; n++) {
+                        int w = ptrndata->docs[m]->words[n];
+                        int k = z[m][n];
+                        loglikelihood += log(phi[k][w] * theta[m][k]);
+                        denom++;
+                    }
+                }
+                double avgloglikelihood = loglikelihood / denom;
+                printf("Log likelihood = %f per word %f after AATM\n", loglikelihood, avgloglikelihood);
                 save_model(utils::generate_model_name_aatm(liter, fname));
     	    }
     	}
@@ -878,6 +885,21 @@ void model::estimate() {
     printf("Saving the final model!\n");
     compute_theta();
     compute_phi();
+    double loglikelihood = 0.0;
+    int denom = 0;
+    // for all z_i (Each Gibbs sample)
+    for (int m = 0; m < M; m++) {
+        for (int n = 0; n < ptrndata->docs[m]->length; n++) {
+            int w = ptrndata->docs[m]->words[n];
+            int k = z[m][n];
+            loglikelihood += log(phi[k][w] * theta[m][k]);
+            denom++;
+        }
+    }
+    double avgloglikelihood = loglikelihood / denom;
+    printf("Log likelihood = %f per word %f \n", loglikelihood, avgloglikelihood);
+    
+
     liter--;
     save_model(utils::generate_model_name(-1, fname));
 }
@@ -888,22 +910,24 @@ void model::aatm() {
 
     // Figure out which topics should be dumped using KL divergence
     double * vdivergences = new double[K];
-    double sum_vdivergence = 0.0;
+    double max_vdivergence = 0.0;
     double * udivergences = new double[K];
-    double sum_udivergence = 0.0;
+    double max_udivergence = 0.0;
 
     for (int k = 0; k < K; ++k) {
+        udivergences[k] = 0.0;
         vdivergences[k] = 0.0;
         for (int w = 0; w < V; ++w) {
             vdivergences[k] += (phi[k][w] - vacuous_dist[w]) * log(phi[k][w] / vacuous_dist[w]);
             udivergences[k] += (phi[k][w] - uniform_dist[w]) * log(phi[k][w] / uniform_dist[w]);
         }
-        sum_vdivergence += vdivergences[k];
-        sum_udivergence += udivergences[k];
+
+        max_vdivergence = max(max_vdivergence, vdivergences[k]);
+        max_udivergence = max(max_udivergence, udivergences[k]);
     }
 
-    double u_threshold = 0.2 * sum_udivergence / K;
-    double v_threshold = 0.2 * sum_vdivergence / K;
+    double u_threshold = uthresh * max_udivergence;
+    double v_threshold = vthresh * max_vdivergence;
 
     for (int k = 0; k < K; ++k) {
         if (udivergences[k] < u_threshold || vdivergences[k] < v_threshold) {
@@ -939,7 +963,7 @@ void model::aatm() {
         }
     }
 
-    double k_threshold = 0.05 * top_kdivergence;
+    double k_threshold = kthresh * top_kdivergence;
 
     for (int k = 0; k < K; ++k) {
         if (freetopics.find(k) != freetopics.end())
@@ -983,7 +1007,6 @@ void model::delete_topic(int top) {
                 nw[w][top] -= 1;
                 nd[m][top] -= 1;
                 nwsum[top] -= 1;
-                ndsum[m] -= 1;
             }
         }
     }
