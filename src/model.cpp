@@ -330,6 +330,10 @@ int model::save_model(string model_name) {
     if (save_model_phi(dir + model_name + phi_suffix)) {
 	return 1;
     }
+
+    if (save_model_twords(dir + model_name + twords_suffix)) {
+    return 1;
+    }
     
     return 0;
 }
